@@ -5,6 +5,7 @@ go 1.25.5
 require (
 	github.com/ebitengine/purego v0.9.1
 	github.com/hajimehoshi/ebiten/v2 v2.9.7
+	github.com/libretro/ludo v0.19.0
 )
 
 require (

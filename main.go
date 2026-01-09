@@ -8,12 +8,13 @@ import (
 	"os"
 	"path"
 	"time"
+	"unsafe"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
-	"github.com/igorcafe/retro/libretro"
+	"github.com/libretro/ludo/libretro"
 )
 
 type Game struct {
@@ -21,7 +22,9 @@ type Game struct {
 	messageTimer    *time.Timer
 	Width           int
 	Height          int
-	Pixels          []byte
+	pixels          []byte
+	PixelColors     []color.RGBA
+	PixelFormat     uint32
 	pressedKeys     []ebiten.Key
 	justPressedKeys []ebiten.Key
 
@@ -62,10 +65,9 @@ func main() {
 		log.Fatalf("usage: %s CORE_PATH CONTENT_PATH", os.Args[0])
 	}
 
-	core := libretro.NewCore()
 	// corePath := "./fceumm_libretro.so"
 	corePath := os.Args[1]
-	err := core.LoadDL(corePath)
+	core, err := libretro.Load(corePath)
 	if err != nil {
 		panic(err)
 	}
@@ -88,82 +90,132 @@ func main() {
 
 	gamePath := path.Join(dir, os.Args[2])
 
-	core.PollInput = func() {
+	core.SetEnvironment(func(env uint32, data unsafe.Pointer) bool {
+		switch env {
+		case
+			libretro.EnvironmentGetVariable,
+			libretro.EnvironmentGetVariableUpdate,
+			libretro.EnvironmentSetSupportAchievements,
+			libretro.EnvironmentGetInputBitmasks:
+		default:
+			log.Printf("RETRO_ENVIRONMENT: %v", env)
+		}
+		switch env {
+		case libretro.EnvironmentSetPixelFormat:
+			format := *(*uint32)(unsafe.Pointer(data))
+			log.Printf("retro_set_environment - cmd=SET_PIXEL_FORMAT - fmt=%d\n", format)
+			if format > libretro.PixelFormatRGB565 {
+				log.Fatalf("invalid pixel format: %d", format)
+			}
+			game.PixelFormat = format
+			return false
+			// case libretro.EnvironmentGetVariable:
+			// 	data2 := *(*retro_variable)(unsafe.Pointer(data))
+			// 	_ = data2
+			// 	// log.Printf("retro_set_environment - cmd=GET_VARIABLE - key=%#+v\n", charPtrToString(data2.key))
+			// 	return false
+			// case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+			// 	// log.Printf("retro_set_environment - cmd=GET_VARIABLE_UPDATE - result=%v\n", *(*bool)(unsafe.Pointer(data)))
+			// 	return false
+			// case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+			// 	log.Printf("retro_set_environment - cmd=GET_LOG_INTERFACE - data=%#+v\n", data)
+			// 	return false
+		}
+
+		return false
+	})
+
+	core.SetInputPoll(func() {
 		game.pressedKeys = inpututil.AppendPressedKeys(nil)
 		game.justPressedKeys = inpututil.AppendJustPressedKeys(nil)
-	}
+	})
 
-	core.GetInputState = func(port, device, index, id uint) int16 {
+	core.SetInputState(func(port uint, device uint32, index uint, id uint) int16 {
 		if port != 0 || device != 1 || index != 0 {
 			return 0
 		}
 
-		button := uint(libretro.RETRO_DEVICE_ID_DUMMY)
+		button := uint32(10000)
 		for _, key := range game.pressedKeys {
 			switch key {
 			case ebiten.KeyArrowUp:
-				button = libretro.RETRO_DEVICE_ID_JOYPAD_UP
+				button = libretro.DeviceIDJoypadUp
 			case ebiten.KeyArrowDown:
-				button = libretro.RETRO_DEVICE_ID_JOYPAD_DOWN
+				button = libretro.DeviceIDJoypadDown
 			case ebiten.KeyArrowLeft:
-				button = libretro.RETRO_DEVICE_ID_JOYPAD_LEFT
+				button = libretro.DeviceIDJoypadLeft
 			case ebiten.KeyArrowRight:
-				button = libretro.RETRO_DEVICE_ID_JOYPAD_RIGHT
+				button = libretro.DeviceIDJoypadRight
 			case ebiten.KeyC:
-				button = libretro.RETRO_DEVICE_ID_JOYPAD_B
+				button = libretro.DeviceIDJoypadB
 			case ebiten.KeyX:
-				button = libretro.RETRO_DEVICE_ID_JOYPAD_A
+				button = libretro.DeviceIDJoypadA
 			}
-			if id == button {
+			if id == uint(button) {
 				return 1
 			}
 		}
 
 		return 0
-	}
+	})
 
-	core.OnLayoutChanged = func(width, height int) {
-		game.Width = width
-		game.Height = height
-	}
-
-	core.OnPixelsUpdate = func(pixels []color.RGBA) {
-		if len(game.Pixels) != game.Width*game.Height*4 {
-			game.Pixels = make([]byte, game.Width*game.Height*4)
+	// unsafe.Pointer, int32, int32, int32
+	core.SetVideoRefresh(func(data unsafe.Pointer, width, height int32, pitch int32) {
+		dataLen := width * height
+		if len(game.PixelColors) != int(width*height) {
+			game.PixelColors = make([]color.RGBA, int(width*height))
+		}
+		if game.Width != int(width) || game.Height != int(height) {
+			game.Width = int(width)
+			game.Height = int(height)
 		}
 
-		for i := 0; i < len(pixels); i++ {
-			clr := pixels[i]
-			copy(game.Pixels[i*4:i*4+4], []byte{clr.R, clr.G, clr.B, clr.A})
-		}
-		game.Pixels = append(game.Pixels)
-	}
+		// log.Println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
 
-	core.OnAudioSample = func(samples []int16) int {
-		buf := make([]float32, len(samples))
-		for i := range len(buf) {
-			buf[i] = float32(samples[i]) / float32(1<<16)
+		for i := 0; i < int(dataLen); i++ {
+
+			clr := color.RGBA{}
+
+			switch game.PixelFormat {
+			case libretro.PixelFormat0RGB1555:
+				unitSize := unsafe.Sizeof(uint16(0))
+				ptr := uintptr(data) + uintptr(i)*unitSize
+				pixel := *(*uint16)(unsafe.Pointer(ptr))
+
+				clr.A = byte(((pixel >> 15) & 1) * 255)
+				clr.R = byte(((pixel >> 10) & 0b11111) * 255 / 31)
+				clr.G = byte(((pixel >> 5) & 0b11111) * 255 / 31)
+				clr.B = byte((pixel & 0b11111) * 255 / 31)
+
+			case libretro.PixelFormatXRGB8888:
+				unitSize := unsafe.Sizeof(uint32(0))
+				ptr := uintptr(data) + uintptr(i)*unitSize
+				pixel := *(*uint32)(unsafe.Pointer(ptr))
+
+				clr.A = byte((pixel >> 24) & 0xFF)
+				clr.R = byte((pixel >> 16) & 0xFF)
+				clr.G = byte((pixel >> 8) & 0xFF)
+				clr.B = byte(pixel & 0xFF)
+
+				// TODO: RETRO_PIXEL_FORMAT_RGB565
+
+			default:
+				log.Fatalf("Pixel format not implemented: %d", game.PixelFormat)
+			}
+
+			game.PixelColors[i] = clr
 		}
+	})
+
+	core.SetAudioSampleBatch(func(data []byte, frames int32) int32 {
 		_ = audioWriter
-		// binary.Write(audioWriter, binary.LittleEndian, buf)
-		return len(samples)
-	}
+		return 0
+	})
 
 	core.Init()
 
 	sysInfo := core.GetSystemInfo()
-	avInfo := core.GetSystemAVInfo()
-
-	log.Printf("SYSTEM INFO: %s %s - NeedFullPath=%v - BlockExtract=%v - ValidExtensions=%v\n", sysInfo.LibraryName, sysInfo.LibraryVersion, sysInfo.NeedFullPath, sysInfo.BlockExtract, sysInfo.ValidExtensions)
-	log.Printf("AV INFO: Geometry=%+v - Timing=%+v\n", avInfo.Geometry, avInfo.Timing)
-	audioCtx := audio.NewContext(int(avInfo.Timing.SampleRate))
-
-	player, err := audioCtx.NewPlayerF32(audioReader)
-	if err != nil {
-		panic(err)
-	}
-
-	player.Play()
+	log.Printf("SYSTEM INFO: %s %s - NeedFullPath=%v - BlockExtract=%v - ValidExtensions=%v\n", sysInfo.LibraryName, sysInfo.LibraryVersion, sysInfo.NeedFullpath, sysInfo.BlockExtract, sysInfo.ValidExtensions)
 
 	frameCount := 0
 	lastKeyFrame := time.Now()
@@ -171,7 +223,18 @@ func main() {
 
 	game.DrawFunc = func(screen *ebiten.Image) {
 		img := ebiten.NewImage(game.Width, game.Height)
-		img.WritePixels(game.Pixels)
+
+		if len(game.pixels) != game.Width*game.Height*4 {
+			game.pixels = make([]byte, game.Width*game.Height*4)
+		}
+
+		for i := 0; i < len(game.PixelColors); i++ {
+			clr := game.PixelColors[i]
+			copy(game.pixels[i*4:i*4+4], []byte{clr.R, clr.G, clr.B, clr.A})
+		}
+		game.pixels = append(game.pixels)
+
+		img.WritePixels(game.pixels)
 		screen.DrawImage(img, nil)
 
 		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%.1f", fps), game.Width-30, 10)
@@ -198,31 +261,23 @@ func main() {
 				if stateSaved {
 					stateNumber = (stateNumber + 1) % maxStates
 				}
-				f, err := os.Create(statePath + fmt.Sprint(stateNumber))
+				state, err := core.Serialize(core.SerializeSize())
 				if err != nil {
 					log.Fatal(err)
 				}
-				err = core.WriteState(f)
-				if err != nil {
-					log.Fatal(err)
-				}
-				err = f.Close()
+				err = os.WriteFile(statePath+fmt.Sprint(stateNumber), state, 0666)
 				if err != nil {
 					log.Fatal(err)
 				}
 				game.SetTempMessage(fmt.Sprintf("state saved at slot %d", stateNumber), time.Second)
 				stateSaved = true
 			case ebiten.KeyF4:
-				f, err := os.Open(statePath + fmt.Sprint(stateNumber))
+				b, err := os.ReadFile(statePath + fmt.Sprint(stateNumber))
 				if err != nil {
 					game.SetTempMessage(fmt.Sprintf("no save file in current slot: %d", stateNumber), time.Second)
 					continue
 				}
-				err = core.ReadState(f)
-				if err != nil {
-					log.Fatal(err)
-				}
-				err = f.Close()
+				err = core.Unserialize(b, core.SerializeSize())
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -242,24 +297,34 @@ func main() {
 		return nil
 	}
 
-	gameInfo := libretro.GameInfo{}
-	if sysInfo.NeedFullPath {
-		gameInfo = libretro.GameInfo{Path: gamePath}
-	} else {
+	gameInfo := libretro.GameInfo{
+		Path: gamePath,
+	}
+	if !sysInfo.NeedFullpath {
 		b, err := os.ReadFile(gamePath)
 		if err != nil {
 			panic(err)
 		}
-		gameInfo = libretro.GameInfo{
-			Data: b,
-			Size: uint64(len(b)),
-		}
+		gameInfo.Data = unsafe.Pointer(unsafe.SliceData(b))
+		gameInfo.Size = int64(len(b))
 	}
 
-	if err := core.LoadGame(gameInfo); err != nil {
+	if ok := core.LoadGame(gameInfo); !ok {
 		log.Fatal(err)
 		return
 	}
+
+	avInfo := core.GetSystemAVInfo()
+
+	log.Printf("AV INFO: Geometry=%+v - Timing=%+v\n", avInfo.Geometry, avInfo.Timing)
+	audioCtx := audio.NewContext(int(avInfo.Timing.SampleRate))
+
+	player, err := audioCtx.NewPlayerF32(audioReader)
+	if err != nil {
+		panic(err)
+	}
+
+	player.Play()
 
 	err = ebiten.RunGame(game)
 	if err != nil {
