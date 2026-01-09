@@ -76,6 +76,10 @@ func main() {
 	}
 
 	audioReader, audioWriter := io.Pipe()
+	statePath := os.Args[2] + ".state"
+	stateNumber := 0
+	stateSaved := false
+	maxStates := 10
 
 	dir, err := os.Getwd()
 	if err != nil {
@@ -188,6 +192,52 @@ func main() {
 	}
 
 	game.UpdateFunc = func() error {
+		for _, key := range game.justPressedKeys {
+			switch key {
+			case ebiten.KeyF2:
+				if stateSaved {
+					stateNumber = (stateNumber + 1) % maxStates
+				}
+				f, err := os.Create(statePath + fmt.Sprint(stateNumber))
+				if err != nil {
+					log.Fatal(err)
+				}
+				err = core.WriteState(f)
+				if err != nil {
+					log.Fatal(err)
+				}
+				err = f.Close()
+				if err != nil {
+					log.Fatal(err)
+				}
+				game.SetTempMessage(fmt.Sprintf("state saved at slot %d", stateNumber), time.Second)
+				stateSaved = true
+			case ebiten.KeyF4:
+				f, err := os.Open(statePath + fmt.Sprint(stateNumber))
+				if err != nil {
+					game.SetTempMessage(fmt.Sprintf("no save file in current slot: %d", stateNumber), time.Second)
+					continue
+				}
+				err = core.ReadState(f)
+				if err != nil {
+					log.Fatal(err)
+				}
+				err = f.Close()
+				if err != nil {
+					log.Fatal(err)
+				}
+				game.SetTempMessage(fmt.Sprintf("state loaded from slot %d", stateNumber), time.Second)
+			case ebiten.KeyF6:
+				stateSaved = false
+				stateNumber = (stateNumber + maxStates - 1) % maxStates
+				game.SetTempMessage(fmt.Sprintf("current slot: %d", stateNumber), time.Second)
+			case ebiten.KeyF7:
+				stateSaved = false
+				stateNumber = (stateNumber + 1) % maxStates
+				game.SetTempMessage(fmt.Sprintf("current slot: %d", stateNumber), time.Second)
+			}
+		}
+
 		core.Run()
 		return nil
 	}

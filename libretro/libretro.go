@@ -3,6 +3,7 @@ package libretro
 import (
 	"fmt"
 	"image/color"
+	"io"
 	"log"
 	"strings"
 	"unsafe"
@@ -41,8 +42,8 @@ type Core struct {
 	retro_get_system_info            func(*retro_system_info)
 	retro_get_system_av_info         func(*retro_system_av_info)
 	retro_set_controller_port_device func(port, device uint)
-	retro_serialize                  func(data uintptr, size uint64)
-	retro_unserialize                func(data uintptr, size uint64)
+	retro_serialize                  func(data *byte, size uint64) bool
+	retro_unserialize                func(data *byte, size uint64) bool
 
 	// callbacks
 	callback_log func(level retro_log_level, fmt *byte, args uintptr)
@@ -212,6 +213,32 @@ func (c *Core) Deinit() {
 
 func (c *Core) Run() {
 	c.retro_run()
+}
+
+func (c *Core) SerializeSize() uint64 {
+	return c.retro_serialize_size()
+}
+
+func (c *Core) WriteState(w io.Writer) error {
+	b := make([]byte, c.retro_serialize_size())
+	if ok := c.retro_serialize(unsafe.SliceData(b), uint64(len(b))); !ok {
+		return fmt.Errorf("failed to serialize")
+	}
+	_, err := w.Write(b)
+	log.Printf("write state: %d bytes", len(b))
+	return err
+}
+
+func (c *Core) ReadState(r io.Reader) error {
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	log.Printf("read state: %d bytes", len(b))
+	if ok := c.retro_unserialize(unsafe.SliceData(b), uint64(len(b))); !ok {
+		return fmt.Errorf("failed to unserialize")
+	}
+	return nil
 }
 
 func (c *Core) GetSystemInfo() SystemInfo {
