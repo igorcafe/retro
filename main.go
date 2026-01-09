@@ -208,8 +208,11 @@ func main() {
 	})
 
 	core.SetAudioSampleBatch(func(data []byte, frames int32) int32 {
-		_ = audioWriter
-		return 0
+		n, err := audioWriter.Write(data)
+		if err != nil {
+			log.Print(err)
+		}
+		return int32(n / 4)
 	})
 
 	core.Init()
@@ -319,11 +322,12 @@ func main() {
 	log.Printf("AV INFO: Geometry=%+v - Timing=%+v\n", avInfo.Geometry, avInfo.Timing)
 	audioCtx := audio.NewContext(int(avInfo.Timing.SampleRate))
 
-	player, err := audioCtx.NewPlayerF32(audioReader)
+	player, err := audioCtx.NewPlayer(audioReader)
 	if err != nil {
 		panic(err)
 	}
 
+	player.SetBufferSize(3 * time.Second / 60) // buffer size of 3 frames for a 60fps game
 	player.Play()
 
 	err = ebiten.RunGame(game)
