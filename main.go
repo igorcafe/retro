@@ -1,14 +1,17 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"io"
 	"log"
 	"os"
 	"path"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/audio"
+	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/igorcafe/retro/libretro"
 )
@@ -144,10 +147,22 @@ func main() {
 
 	player.Play()
 
+	frameCount := 0
+	lastKeyFrame := time.Now()
+	fps := float64(0)
+
 	game.DrawFunc = func(screen *ebiten.Image) {
 		img := ebiten.NewImage(game.Width, game.Height)
 		img.WritePixels(game.Pixels)
 		screen.DrawImage(img, nil)
+
+		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("%.1f", fps), game.Width-30, 10)
+
+		frameCount++
+		if frameCount%60 == 0 {
+			fps = 60 / time.Since(lastKeyFrame).Seconds()
+			lastKeyFrame = time.Now()
+		}
 	}
 
 	game.LayoutFunc = func(outsideWidth, outsideHeight int) (screenWidth int, screenHeight int) {
