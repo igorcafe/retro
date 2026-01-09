@@ -65,8 +65,13 @@ func main() {
 		log.Fatalf("usage: %s CORE_PATH CONTENT_PATH", os.Args[0])
 	}
 
-	// corePath := "./fceumm_libretro.so"
-	corePath := os.Args[1]
+	dir, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	corePath := path.Join(dir, os.Args[1])
+
 	core, err := libretro.Load(corePath)
 	if err != nil {
 		panic(err)
@@ -82,11 +87,6 @@ func main() {
 	stateNumber := 0
 	stateSaved := false
 	maxStates := 10
-
-	dir, err := os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	gamePath := path.Join(dir, os.Args[2])
 
