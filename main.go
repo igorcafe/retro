@@ -17,12 +17,13 @@ import (
 )
 
 type Game struct {
-	keys         []ebiten.Key
-	message      string
-	messageTimer *time.Timer
-	Width        int
-	Height       int
-	Pixels       []byte
+	message         string
+	messageTimer    *time.Timer
+	Width           int
+	Height          int
+	Pixels          []byte
+	pressedKeys     []ebiten.Key
+	justPressedKeys []ebiten.Key
 
 	DrawFunc   func(screen *ebiten.Image)
 	LayoutFunc func(outsideWidth int, outsideHeight int) (screenWidth int, screenHeight int)
@@ -84,7 +85,8 @@ func main() {
 	gamePath := path.Join(dir, os.Args[2])
 
 	core.PollInput = func() {
-		game.keys = inpututil.AppendPressedKeys(nil)
+		game.pressedKeys = inpututil.AppendPressedKeys(nil)
+		game.justPressedKeys = inpututil.AppendJustPressedKeys(nil)
 	}
 
 	core.GetInputState = func(port, device, index, id uint) int16 {
@@ -93,7 +95,7 @@ func main() {
 		}
 
 		button := uint(libretro.RETRO_DEVICE_ID_DUMMY)
-		for _, key := range game.keys {
+		for _, key := range game.pressedKeys {
 			switch key {
 			case ebiten.KeyArrowUp:
 				button = libretro.RETRO_DEVICE_ID_JOYPAD_UP
@@ -186,7 +188,6 @@ func main() {
 	}
 
 	game.UpdateFunc = func() error {
-		log.Println(game.keys)
 		core.Run()
 		return nil
 	}
