@@ -17,10 +17,12 @@ import (
 )
 
 type Game struct {
-	Width  int
-	Height int
-	Pixels []byte
-	keys   []ebiten.Key
+	keys         []ebiten.Key
+	message      string
+	messageTimer *time.Timer
+	Width        int
+	Height       int
+	Pixels       []byte
 
 	DrawFunc   func(screen *ebiten.Image)
 	LayoutFunc func(outsideWidth int, outsideHeight int) (screenWidth int, screenHeight int)
@@ -28,6 +30,16 @@ type Game struct {
 }
 
 var _ ebiten.Game = &Game{}
+
+func (g *Game) SetTempMessage(msg string, dur time.Duration) {
+	g.message = msg
+	if g.messageTimer != nil {
+		g.messageTimer.Stop()
+	}
+	g.messageTimer = time.AfterFunc(dur, func() {
+		g.message = ""
+	})
+}
 
 // Draw implements ebiten.Game.
 func (g *Game) Draw(screen *ebiten.Image) {
@@ -162,6 +174,10 @@ func main() {
 		if frameCount%60 == 0 {
 			fps = 60 / time.Since(lastKeyFrame).Seconds()
 			lastKeyFrame = time.Now()
+		}
+
+		if game.message != "" {
+			ebitenutil.DebugPrintAt(screen, game.message, 10, 10)
 		}
 	}
 
